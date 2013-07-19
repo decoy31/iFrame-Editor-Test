@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>iFrame Editor Test</title>
+		<script type="text/javascript" src="http://code.jquery.com/jquery-1.9.1.min.js"></script>
+        <script type="text/javascript" src="http://code.jquery.com/jquery-migrate-1.1.1.min.js"></script>
+		<script type="text/javascript">
+			"use strict";
+			window.tmng = {
+				externalCall: function () {
+					alert('External handler called!');
+				},
+				externalCall2: function () {
+					alert('External handler number 2 called!');
+				}
+			};
+
+			// Any content put into the iframe must be put there during or after
+			// the onload of the iframe.
+			function onIframeLoadHandler (editor) {
+				var editor_window = editor.contentWindow,
+					parent_window = this || editor_window.parent,
+					editor_doc = editor_window.document,
+					editor_body = editor_doc.body;
+
+                // Load up jQuery globals.
+                editor_window.jQuery = editor_window.$ = parent_window.jQuery;
+				editor_body.contentEditable = true;
+
+				// Discovered a issue here where IE does not support the
+				// use of styleWithCSS/useCSS execCommand.
+				try {
+                    // 0 is for older browsers.
+					editor_doc.execCommand('styleWithCSS', 0, true);
+				} catch (e) {
+					try {
+						editor_doc.execCommand('useCSS', 0, true);
+					} catch (e) {
+						try {
+							editor_doc.execCommand('styleWithCSS', false, true);
+						}
+						catch (e) {
+							console.error('This browser does not support the styleWithCSS/useCSS execCommand. ', e);
+						}
+					}
+				}
+
+				// Set up events for button clicks within the editor document.
+				$(editor_body).on('click', 'button', parent_window.tmng.externalCall);
+			}
+
+			$(document).ready(function () {
+				var editor = $('iframe').get(0),
+					editor_window = editor.contentWindow,
+					editor_doc = editor_window.document,
+					editor_body = editor_doc.body;
+
+				function getSelection (window, doc) {
+					var selection, range;
+
+					if (doc.createRange) {
+						//Firefox, Chrome, IE 9+
+						selection = window.getSelection();
+						range = selection.getRangeAt(0);
+					} else if (doc.selection) {
+						//IE 8 and lower
+						selection = doc.selection;
+						range = doc.selection.createRange();
+					}
+
+					return {
+						selection: selection,
+						range: range
+					};
+				}
+
+				/**
+				 * Source: http://stackoverflow.com/a/6691294/1265126
+				 */
+				function pasteHtmlAtCaret(html) {
+					var sel, range;
+
+                    $(editor_body).focus();
+					html = $(html).get(0);
+
+					if (html) {
+						html = html.outerHTML;
+
+						if (editor_window.getSelection) {
+							// IE9 and non-IE
+							sel = editor_window.getSelection();
+
+							if (sel.getRangeAt && sel.rangeCount) {
+								range = sel.getRangeAt(0);
+								range.deleteContents();
+
+								// Range.createContextualFragment() would be useful here but is
+								// non-standard and not supported in all browsers (IE9, for one)
+								var el = editor_doc.createElement('div');
+								el.innerHTML = html;
+								var frag = editor_doc.createDocumentFragment(), node, lastNode;
+
+								while ( (node = el.firstChild) ) {
+									lastNode = frag.appendChild(node);
+								}
+
+								range.insertNode(frag);
+
+								// Preserve the selection
+								if (lastNode) {
+									range = range.cloneRange();
+									range.setStartAfter(lastNode);
+									range.collapse(true);
+									sel.removeAllRanges();
+									sel.addRange(range);
+								}
+							}
+						} else if (editor_doc.selection && editor_doc.selection.type != 'Control') {
+							// IE < 9
+							editor_doc.selection.createRange().pasteHTML(html);
+						}
+					} else {
+						console.error('Content data could not be inserted!');
+					}
+				}
+
+				function insertContent (content) {
+					$(editor_body).focus();
+
+					var range = getSelection(editor_window, editor_doc).range,
+						contentToInsert = $(content).get(0);
+
+					if (contentToInsert) {
+						if (!range.collapsed) {
+							// If the user has text selected in the editor, we want to replace
+							// that text with the button. The delete execCommand
+							// handles merging and spliting nodes, I'm assuming, better than
+							// range.deleteContents() and is cross-browser compatible.
+							editor_doc.execCommand('delete');
+						}
+
+						// TODO: Doesn't seem to work in IE.
+						range.insertNode(contentToInsert);
+						console.error('The cursor should be at the end of the inserted content.', range);
+					} else {
+						// Clean up
+						$(contentToInsert).remove();
+						console.error('Content data could not be inserted!', content);
+					}
+				}
+
+				function inlineStyle (styleCommand) {
+					editor_doc.execCommand(styleCommand);
+				}
+
+				// TODO: IE creates undesirable resize handles around the button.
+				function insertButton () {
+					var btn = $('<button>').addClass('testButton').text('Fire External Event').get(0);
+					btn.contentEditable = false;
+					pasteHtmlAtCaret(btn);
+					$(btn).on('click', tmng.externalCall2);
+				}
+
+                // --- Playing around with various events ---
+
+				$('button.inlineStyle').on('click', function (e) {
+					inlineStyle($(e.target).val());
+					// Reproduce Microsoft Word's default functionality.
+					$(editor_body).focus();
+				});
+
+				$('button.insertContent').on('click', function () {
+					pasteHtmlAtCaret('<div><p>The quick brown fox jumps over the lazy dog.</p></div>');
+					// Reproduce Microsoft Word's default functionality.
+					$(editor_body).focus();
+				});
+
+				$('button.insertButton').on('click', insertButton);
+
+				$('*').on('focus', function () {
+					console.log('parent ' + (this.nodeName || 'WINDOW') + ' focus:', this);
+				});
+
+				$(editor_window).add('*', editor_doc).on('focus', function () {
+					console.log('iframe ' + (this.nodeName || 'WINDOW') + ' focus:', this);
+				});
+
+				$(editor_doc).on('selectionchange', function (e) {
+					console.log('selectionchange - this:', this, 'event:', e);
+				});
+
+                // --- End of events ---
+			});
+		</script>
+		<style>
+			.bold {
+				font-weight: bold;
+			}
+			.italic {
+				font-style: italic;
+			}
+			.underline {
+				text-decoration: underline;
+			}
+		</style>
+	</head>
+	<body>
+		<button type="button" class="inlineStyle bold" value="bold">B</button>
+		<button type="button" class="inlineStyle italic" value="italic">I</button>
+		<button type="button" class="inlineStyle underline" value="underline">U</button><br/>
+		<iframe onload="onIframeLoadHandler(this);">
+            <p>Your browser does not support iframes.</p>
+		</iframe>
+		<br/>
+		<button type="button" class="insertContent">Insert Sample Text</button>
+		<button type="button" class="insertButton">Insert Sample Button</button>
+	</body>
+</html>
